@@ -1,6 +1,7 @@
 package com.ur.urcap.examples.ellipse.impl;
 
 import com.ur.urcap.api.contribution.ProgramNodeContribution;
+import com.ur.urcap.api.domain.ProgramAPI;
 import com.ur.urcap.api.domain.URCapAPI;
 import com.ur.urcap.api.domain.data.DataModel;
 import com.ur.urcap.api.domain.feature.Feature;
@@ -17,8 +18,14 @@ import com.ur.urcap.api.domain.program.structure.TreeNode;
 import com.ur.urcap.api.domain.program.structure.TreeStructureException;
 import com.ur.urcap.api.domain.script.ScriptWriter;
 import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback;
+import com.ur.urcap.api.domain.userinteraction.UserInteraction;
+import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementCompleteEvent;
+import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementErrorEvent;
+import com.ur.urcap.api.domain.userinteraction.robot.movement.RobotMovement;
+import com.ur.urcap.api.domain.userinteraction.robot.movement.RobotMovementCallback;
 import com.ur.urcap.api.domain.validation.ErrorHandler;
 import com.ur.urcap.api.domain.value.Pose;
+import com.ur.urcap.api.domain.value.ValueFactoryProvider;
 import com.ur.urcap.api.domain.value.blend.Blend;
 import com.ur.urcap.api.domain.value.jointposition.JointPositions;
 import com.ur.urcap.api.domain.value.simple.Acceleration;
@@ -28,6 +35,7 @@ import com.ur.urcap.api.domain.value.simple.SimpleValueFactory;
 import com.ur.urcap.api.domain.value.simple.Speed;
 import com.ur.urcap.api.ui.annotation.Input;
 import com.ur.urcap.api.ui.annotation.Label;
+import com.ur.urcap.api.ui.component.InputButton;
 import com.ur.urcap.api.ui.component.InputEvent;
 import com.ur.urcap.api.ui.component.LabelComponent;
 
@@ -43,6 +51,8 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	private static final String ERROR_LABEL = "errorLabel";
 	private static final String DEFINED_KEY = "is_defined";
 	private static final String BUTTON_SELECT_POSE = "buttonSelectPose";
+	private static final String BUTTON_MOVE_HERE = "buttonMoveHere";
+	private static final String CENTER_POSITION = "center_pose";
 
 	private static final double SHARED_TOOL_SPEED = 250;
 	private static final double SHARED_TOOL_ACCELERATION = 1200;
@@ -52,7 +62,10 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 
 	private static final int NUMBER_OF_WAYPOINTS = 16;
 
-	private final URCapAPI urCapAPI;
+	private final ProgramAPI programAPI;
+	private final ProgramModel programModel;
+	private final UserInteraction userInteraction;
+	private final ValueFactoryProvider valueFactoryProvider;
 
 	private MoveNode moveNode;
 	private final List<WaypointNode> waypointNodes = new ArrayList<WaypointNode>();
@@ -62,30 +75,41 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 
 	private WaypointNodeConfigFactory waypointNodeConfigFactory;
 	private ProgramNodeFactory programNodeFactory;
+	private final RobotMovement robotMovement;
 
 	private final BufferedImage errorIcon;
+
+	private EllipseState ellipseState = new EllipseState();
 
 	@Label(id = ERROR_LABEL)
 	public LabelComponent errorLabel;
 
+	@Input(id = BUTTON_MOVE_HERE)
+	private InputButton buttonMoveHere;
+
 	public EllipseProgramNodeContribution(URCapAPI urCapAPI, DataModel dataModel) {
-		this.urCapAPI = urCapAPI;
 		this.dataModel = dataModel;
 		this.errorIcon = getErrorImage();
 
-		programNodeFactory = urCapAPI.getProgramModel().getProgramNodeFactory();
+		programAPI = urCapAPI.getProgramAPIProvider().getProgramAPI();
+		programModel = programAPI.getProgramModel();
+		valueFactoryProvider = programAPI.getValueFactoryProvider();
+		programNodeFactory = programModel.getProgramNodeFactory();
 		waypointNodeConfigFactory = programNodeFactory.createWaypointNode().getConfigFactory();
+		userInteraction = urCapAPI.getProgramAPIProvider().getUserInterfaceAPI().getUserInteraction();
+		robotMovement = userInteraction.getRobotMovement();
 	}
 
 	@Input(id = BUTTON_SELECT_POSE)
 	public void onSelectPoseButtonPressed(InputEvent event) {
 		if (event.getEventType() == InputEvent.EventType.ON_PRESSED) {
+			clearErrors();
 			selectCenterPoint();
 		}
 	}
 
 	private void selectCenterPoint() {
-		urCapAPI.getUserInteraction().getUserDefinedRobotPosition(new RobotPositionCallback() {
+		userInteraction.getUserDefinedRobotPosition(new RobotPositionCallback() {
 			@Override
 			public void onOk(Pose pose, JointPositions jointPositions) {
 				removeNodes();
@@ -96,8 +120,44 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 		});
 	}
 
+	@Input(id = BUTTON_MOVE_HERE)
+	public void onMoveToCenterPose(InputEvent event) {
+		if (event.getEventType() == InputEvent.EventType.ON_PRESSED) {
+			clearErrors();
+			moveToCenterPoint();
+		}
+	}
+
+	private void moveToCenterPoint() {
+		Pose centerPose = dataModel.get(CENTER_POSITION, (Pose) null);
+		if (centerPose != null) {
+			robotMovement.requestUserToMoveRobot(centerPose, new RobotMovementCallback() {
+
+				@Override
+				public void onComplete(MovementCompleteEvent event) {
+
+				}
+
+				@Override
+				public void onError(MovementErrorEvent event) {
+					updateError(new EllipseState(getErrorMessage(event.getErrorType())));
+				}
+			});
+		}
+	}
+
+	private String getErrorMessage(MovementErrorEvent.ErrorType errorType) {
+		switch (errorType) {
+			case UNREACHABLE_POSE:
+				return "Could not move to center point.";
+
+			default:
+				return "Error in move here";
+		}
+	}
+
 	private void removeNodes() {
-		TreeNode rootTreeNode = urCapAPI.getProgramModel().getRootTreeNode(this);
+		TreeNode rootTreeNode = programModel.getRootTreeNode(this);
 		try {
 			Iterator<TreeNode> it = rootTreeNode.getChildren().iterator();
 			while (it.hasNext()) {
@@ -110,14 +170,17 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private void adjustWaypointsToCenterPoint(Pose startPose, JointPositions jointPositions) {
+		dataModel.set(CENTER_POSITION, startPose);
 		try {
 			configureWaypointNodes(startPose, jointPositions);
-			clearErrors();
 		} catch (IllegalArgumentException e) {
-			setError();
+			updateError(new EllipseState("Could not create ellipse movement<br>Try a different center point."));
 			resetWaypointNodes();
 		}
 		lockTreeNodes();
+		if (buttonMoveHere != null) {
+			buttonMoveHere.setEnabled(true);
+		}
 	}
 
 	private void resetWaypointNodes() {
@@ -132,12 +195,12 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 
 	private void configureWaypointNodes(Pose centerPose, JointPositions jointPositions) {
 		// adjust orientation according to base
-		double baseAngle = jointPositions.getAllJointPositions()[0].getAngle(Angle.Unit.RAD) + (Math.PI/2);
+		double baseAngle = jointPositions.getAllJointPositions()[0].getAngle(Angle.Unit.RAD) + (Math.PI / 2);
 		double xContribution = Math.cos(baseAngle);
 		double yContribution = Math.sin(baseAngle);
 
 		double angle = -Math.PI;
-		double angularStepDistance = (2*Math.PI)/(double) NUMBER_OF_WAYPOINTS;
+		double angularStepDistance = (2 * Math.PI) / (double) NUMBER_OF_WAYPOINTS;
 
 		for (WaypointNode waypointNode : waypointNodes) {
 			angle += angularStepDistance;
@@ -152,7 +215,7 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private WaypointNodeConfig createWaypointConfig(Pose centerPose, JointPositions jointPositions,
-	                                                double xOffsetInMM, double yOffsetInMM, double zOffsetInMM) {
+													double xOffsetInMM, double yOffsetInMM, double zOffsetInMM) {
 		BlendParameters blendParameters = waypointNodeConfigFactory.createSharedBlendParameters();
 		WaypointMotionParameters motionParameters = waypointNodeConfigFactory.createSharedMotionParameters();
 		Pose pose = createPoseUsingCenterPoseAndOffset(centerPose, xOffsetInMM, yOffsetInMM, zOffsetInMM, Length.Unit.MM);
@@ -161,18 +224,18 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private Pose createPoseUsingCenterPoseAndOffset(Pose pose, double xOffset, double yOffset,
-	                                                double zOffset, Length.Unit unit) {
+													double zOffset, Length.Unit unit) {
 		double x = pose.getPosition().getX(unit) + xOffset;
 		double y = pose.getPosition().getY(unit) + yOffset;
 		double z = pose.getPosition().getZ(unit) + zOffset;
 		double rx = pose.getRotation().getRX(Angle.Unit.RAD);
 		double ry = pose.getRotation().getRY(Angle.Unit.RAD);
 		double rz = pose.getRotation().getRZ(Angle.Unit.RAD);
-		return urCapAPI.getValueFactoryProvider().getPoseFactory().createPose(x, y, z, rx, ry, rz, unit, Angle.Unit.RAD);
+		return valueFactoryProvider.getPoseFactory().
+				createPose(x, y, z, rx, ry, rz, unit, Angle.Unit.RAD);
 	}
 
 	private void createNodes() {
-		ProgramModel programModel = urCapAPI.getProgramModel();
 		try {
 			moveNode = programNodeFactory.createMoveNodeNoTemplate();
 			TreeNode rootTreeNode = programModel.getRootTreeNode(this);
@@ -188,19 +251,19 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private void configureMoveNode() {
-		SimpleValueFactory valueFactory = urCapAPI.getValueFactoryProvider().getSimpleValueFactory();
+		SimpleValueFactory valueFactory = valueFactoryProvider.getSimpleValueFactory();
 
 		Speed speed = valueFactory.createSpeed(SHARED_TOOL_SPEED, Speed.Unit.MM_S);
 		Acceleration acceleration = valueFactory.createAcceleration(SHARED_TOOL_ACCELERATION, Acceleration.Unit.MM_S2);
 		Length length = valueFactory.createLength(SHARED_BLEND_RADIUS_IN_MM, Length.Unit.MM);
-		Blend blend = urCapAPI.getValueFactoryProvider().getBlendFactory().createBlend(length);
+		Blend blend = valueFactoryProvider.getBlendFactory().createBlend(length);
 
 		MovePMotionParameters motionParameters = moveNode.getConfigFactory().createMovePMotionParameters(
 				speed, ErrorHandler.AUTO_CORRECT,
 				acceleration, ErrorHandler.AUTO_CORRECT,
 				blend, ErrorHandler.AUTO_CORRECT);
 
-		Feature feature = urCapAPI.getFeatures().getBaseFeature();
+		Feature feature = programAPI.getFeatureModel().getBaseFeature();
 
 		moveNode.setConfig(moveNode.getConfigFactory().createMovePConfig(motionParameters, feature));
 	}
@@ -213,12 +276,15 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private static String createWaypointName(int waypointNumber) {
-		return "EllipsePos"+waypointNumber;
+		return "EllipsePos" + waypointNumber;
 	}
 
 	@Override
 	public void openView() {
-		// nothing needs to happen here in this example
+		if (buttonMoveHere != null) {
+			buttonMoveHere.setEnabled(dataModel.get(CENTER_POSITION, (Pose) null) != null);
+		}
+		updateError(this.ellipseState);
 	}
 
 	@Override
@@ -242,7 +308,6 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private void lockTreeNodes() {
-		ProgramModel programModel = urCapAPI.getProgramModel();
 		TreeNode thisTreeNode = programModel.getRootTreeNode(this);
 		thisTreeNode.setChildSequenceLocked(true);
 		moveTreeNode.setChildSequenceLocked(true);
@@ -252,7 +317,7 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 		BufferedImage image;
 		try {
 			image = ImageIO.read(getClass().getResource("/com/ur/urcap/examples/ellipse/impl/warning-bigger.png"));
-		} catch(IOException e) {
+		} catch (IOException e) {
 			// Should not happen.
 			throw new RuntimeException("Unexpected exception while loading icon.", e);
 		}
@@ -260,23 +325,43 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private void clearErrors() {
-		if (errorLabel != null) {
-			errorLabel.setVisible(false);
-		}
-		setDefined(true);
-
+		updateError(new EllipseState());
 	}
 
-	private void setError() {
+	private void updateError(EllipseState ellipseState) {
+		this.ellipseState = ellipseState;
 		if (errorLabel != null) {
-			errorLabel.setVisible(true);
-			errorLabel.setText("<html>Error: Could not create ellipse movement<br>Try a different center point.</html>");
+			errorLabel.setVisible(ellipseState.isError());
+			errorLabel.setText("<html>Error: " + ellipseState.getMessage() + "</html>");
 			errorLabel.setImage(errorIcon);
 		}
-		setDefined(false);
+		setDefined(!ellipseState.isError());
 	}
 
 	private void setDefined(boolean defined) {
 		dataModel.set(DEFINED_KEY, defined);
+	}
+
+	private static class EllipseState {
+		private final String message;
+		private final boolean isError;
+
+		EllipseState() {
+			this.isError = false;
+			this.message = "";
+		}
+
+		EllipseState(String message) {
+			this.isError = true;
+			this.message = message;
+		}
+
+		public String getMessage() {
+			return message;
+		}
+
+		public boolean isError() {
+			return isError;
+		}
 	}
 }
