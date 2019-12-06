@@ -58,6 +58,11 @@
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-install-plugin</artifactId>
+				<version>2.5.2</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>2.22.1</version>
 				<configuration>
@@ -104,7 +109,7 @@
 						<Bundle-Description>${urcap.description}</Bundle-Description>
 						<!--***************************************************************-->
 						<Import-Package>
-							com.ur.urcap.api*;version="[1.6.0,2.0.0)",
+							com.ur.urcap.api*,
 							*
 						</Import-Package>
 					</instructions>
@@ -159,7 +164,7 @@
 		<dependency>
 			<groupId>com.ur.urcap</groupId>
 			<artifactId>api</artifactId>
-			<version>1.6.0</version>
+			<version>1.9.0</version>
 			<scope>provided</scope>
 		</dependency>
 

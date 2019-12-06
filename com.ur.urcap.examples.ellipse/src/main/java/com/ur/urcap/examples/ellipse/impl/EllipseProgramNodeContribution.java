@@ -40,7 +40,6 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 public class EllipseProgramNodeContribution implements ProgramNodeContribution {
@@ -156,10 +155,8 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	private void removeNodes() {
 		TreeNode rootTreeNode = programModel.getRootTreeNode(this);
 		try {
-			Iterator<TreeNode> it = rootTreeNode.getChildren().iterator();
-			while (it.hasNext()) {
-				TreeNode treeNode = it.next();
-				rootTreeNode.removeChild(treeNode);
+			for (TreeNode child : rootTreeNode.getChildren()) {
+				rootTreeNode.removeChild(child);
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
