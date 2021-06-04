@@ -9,8 +9,8 @@ import com.ur.urcap.api.domain.program.ProgramModel;
 import com.ur.urcap.api.domain.program.nodes.ProgramNodeFactory;
 import com.ur.urcap.api.domain.program.nodes.builtin.MoveNode;
 import com.ur.urcap.api.domain.program.nodes.builtin.WaypointNode;
-import com.ur.urcap.api.domain.program.nodes.builtin.configurations.movenode.builder.MovePConfigBuilder;
 import com.ur.urcap.api.domain.program.nodes.builtin.configurations.movenode.TCPSelection;
+import com.ur.urcap.api.domain.program.nodes.builtin.configurations.movenode.builder.MovePConfigBuilder;
 import com.ur.urcap.api.domain.program.nodes.builtin.configurations.waypointnode.BlendParameters;
 import com.ur.urcap.api.domain.program.nodes.builtin.configurations.waypointnode.WaypointMotionParameters;
 import com.ur.urcap.api.domain.program.nodes.builtin.configurations.waypointnode.WaypointNodeConfig;
@@ -18,7 +18,7 @@ import com.ur.urcap.api.domain.program.nodes.builtin.configurations.waypointnode
 import com.ur.urcap.api.domain.program.structure.TreeNode;
 import com.ur.urcap.api.domain.program.structure.TreeStructureException;
 import com.ur.urcap.api.domain.script.ScriptWriter;
-import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback;
+import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2;
 import com.ur.urcap.api.domain.userinteraction.UserInteraction;
 import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementCompleteEvent;
 import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementErrorEvent;
@@ -28,8 +28,12 @@ import com.ur.urcap.api.domain.validation.ErrorHandler;
 import com.ur.urcap.api.domain.value.Pose;
 import com.ur.urcap.api.domain.value.ValueFactoryProvider;
 import com.ur.urcap.api.domain.value.blend.Blend;
-import com.ur.urcap.api.domain.value.jointposition.JointPositions;
-import com.ur.urcap.api.domain.value.simple.*;
+import com.ur.urcap.api.domain.value.robotposition.PositionParameters;
+import com.ur.urcap.api.domain.value.simple.Acceleration;
+import com.ur.urcap.api.domain.value.simple.Angle;
+import com.ur.urcap.api.domain.value.simple.Length;
+import com.ur.urcap.api.domain.value.simple.SimpleValueFactory;
+import com.ur.urcap.api.domain.value.simple.Speed;
 import com.ur.urcap.api.ui.annotation.Input;
 import com.ur.urcap.api.ui.annotation.Label;
 import com.ur.urcap.api.ui.component.InputButton;
@@ -105,13 +109,13 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 	}
 
 	private void selectCenterPoint() {
-		userInteraction.getUserDefinedRobotPosition(new RobotPositionCallback() {
+		userInteraction.getUserDefinedRobotPosition(new RobotPositionCallback2() {
 			@Override
-			public void onOk(Pose pose, JointPositions jointPositions) {
+			public void onOk(PositionParameters positionParameters) {
 				removeNodes();
 				createNodes();
 				configureMoveNode();
-				adjustWaypointsToCenterPoint(pose, jointPositions);
+				adjustWaypointsToCenterPoint(positionParameters);
 			}
 		});
 	}
@@ -163,10 +167,10 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 		}
 	}
 
-	private void adjustWaypointsToCenterPoint(Pose startPose, JointPositions jointPositions) {
-		dataModel.set(CENTER_POSITION, startPose);
+	private void adjustWaypointsToCenterPoint(PositionParameters positionParameters) {
+		dataModel.set(CENTER_POSITION, positionParameters.getPose());
 		try {
-			configureWaypointNodes(startPose, jointPositions);
+			configureWaypointNodes(positionParameters);
 		} catch (IllegalArgumentException e) {
 			updateError(new EllipseState("Could not create ellipse movement<br>Try a different center point."));
 			resetWaypointNodes();
@@ -187,9 +191,9 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 		}
 	}
 
-	private void configureWaypointNodes(Pose centerPose, JointPositions jointPositions) {
+	private void configureWaypointNodes(PositionParameters positionParameters) {
 		// adjust orientation according to base
-		double baseAngle = jointPositions.getAllJointPositions()[0].getAngle(Angle.Unit.RAD) + (Math.PI / 2);
+		double baseAngle = positionParameters.getJointPositions().getAllJointPositions()[0].getAngle(Angle.Unit.RAD) + (Math.PI / 2);
 		double xContribution = Math.cos(baseAngle);
 		double yContribution = Math.sin(baseAngle);
 
@@ -202,19 +206,19 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 			double offsetY = Math.cos(angle) * HORIZONTAL_RADIUS_IN_MM * yContribution;
 			double offsetZ = Math.sin(-angle) * VERTICAL_RADIUS_IN_MM;
 
-			WaypointNodeConfig newWaypointNodeConfig = createWaypointConfig(centerPose, jointPositions,
-					offsetX, offsetY, offsetZ);
+			WaypointNodeConfig newWaypointNodeConfig = createWaypointConfig(positionParameters, offsetX, offsetY, offsetZ);
 			waypointNode.setConfig(newWaypointNodeConfig);
 		}
 	}
 
-	private WaypointNodeConfig createWaypointConfig(Pose centerPose, JointPositions jointPositions,
+	private WaypointNodeConfig createWaypointConfig(PositionParameters positionParameters,
 													double xOffsetInMM, double yOffsetInMM, double zOffsetInMM) {
 		BlendParameters blendParameters = waypointNodeConfigFactory.createSharedBlendParameters();
 		WaypointMotionParameters motionParameters = waypointNodeConfigFactory.createSharedMotionParameters();
-		Pose pose = createPoseUsingCenterPoseAndOffset(centerPose, xOffsetInMM, yOffsetInMM, zOffsetInMM, Length.Unit.MM);
+		Pose pose = createPoseUsingCenterPoseAndOffset(positionParameters.getPose(), xOffsetInMM, yOffsetInMM, zOffsetInMM, Length.Unit.MM);
 
-		return waypointNodeConfigFactory.createFixedPositionConfig(pose, jointPositions, blendParameters, motionParameters);
+		return waypointNodeConfigFactory.createFixedPositionConfig(pose, positionParameters.getJointPositions(), positionParameters.getTCPOffset(),
+				blendParameters, motionParameters);
 	}
 
 	private Pose createPoseUsingCenterPoseAndOffset(Pose pose, double xOffset, double yOffset,
@@ -252,7 +256,7 @@ public class EllipseProgramNodeContribution implements ProgramNodeContribution {
 		Length length = valueFactory.createLength(SHARED_BLEND_RADIUS_IN_MM, Length.Unit.MM);
 		Blend blend = valueFactoryProvider.getBlendFactory().createBlend(length);
 		Feature feature = programAPI.getFeatureModel().getBaseFeature();
-		TCPSelection tcpSelection = moveNode.getTCPSelectionFactory().createIgnoreActiveTCPSelection();
+		TCPSelection tcpSelection = moveNode.getTCPSelectionFactory().createActiveTCPSelection();
 
 		MovePConfigBuilder movePConfigBuilder = moveNode.getConfigBuilders().createMovePConfigBuilder()
 				.setToolSpeed(speed, ErrorHandler.AUTO_CORRECT)
